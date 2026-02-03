@@ -1,0 +1,56 @@
+name: CI-CD-to-AKS
+
+on:
+  push:
+    branches: [ main, "feature/*" ]
+  pull_request:
+    branches: [ main ]
+
+# --- ADD THIS BLOCK ---
+permissions:
+  id-token: write # Required for requesting the JWT
+  contents: read  # Required for actions/checkout
+# ----------------------
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 1. BUILD PHASE (All branches)
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }} .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}
+
+      # 2. DEPLOY PHASE (Main branch only)
+      - name: Azure Login
+        if: github.ref == 'refs/heads/main'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        if: github.ref == 'refs/heads/main'
+        uses: hashicorp/setup-terraform@v3
+        
+      - name: Terraform Plan (Review Phase)
+        if: github.event_name == 'pull_request'
+        run: |
+          terraform init
+          terraform plan -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}"
+      - name: Terraform Init & Apply
+        if: github.ref == 'refs/heads/main'
+        run: |
+          terraform init
+          terraform apply -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}" -auto-approve
