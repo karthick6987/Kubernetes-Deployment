@@ -41,7 +41,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Setup Terraform
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main'|| github.event_name == 'pull_request'
         uses: hashicorp/setup-terraform@v3
         
       - name: Terraform Plan (Review Phase)
