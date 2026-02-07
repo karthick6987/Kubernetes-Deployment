@@ -17,7 +17,6 @@ terraform {
   }
   # We leave the backend block empty because we will provide the 
   # 'key' dynamically in the GitHub Action YAML
-  backend "azurerm" {}
 }
 
 provider "azurerm" {
