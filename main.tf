@@ -78,15 +78,3 @@ resource "kubernetes_deployment" "webapp" {
   }
 }
 
-# Added a Load Balancer so you can actually visit the app!
-resource "kubernetes_service" "webapp_service" {
-  metadata { name = "webapp-service-${var.env}" }
-  spec {
-    selector = { app = "webapp" }
-    port {
-      port        = 80
-      target_port = 80
-    }
-    type = "LoadBalancer"
-  }
-}
