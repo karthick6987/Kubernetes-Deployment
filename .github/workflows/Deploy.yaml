@@ -1,62 +1,101 @@
-name: CI-CD-to-AKS
+name: AKS-Multi-Env-Deployment
 
 on:
   push:
-    branches: [ main, "feature/*" ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
-# --- ADD THIS BLOCK ---
 permissions:
-  id-token: write # Required for requesting the JWT
-  contents: read  # Required for actions/checkout
-# ----------------------
+  id-token: write
+  contents: read
+
+env:
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_USE_OIDC: true
 
 jobs:
-  build-and-deploy:
+  # JOB 1: Build and Push Docker Image
+  build:
     runs-on: ubuntu-latest
-    env:
-        ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-        ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-        ARM_USE_OIDC: true  # Tells the Terraform runner to use OIDC
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      # 1. BUILD PHASE (All branches)
+      - uses: actions/checkout@v4
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and Push Docker Image
+      - name: Build and Push
         run: |
           docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }} .
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}
 
-      # 2. DEPLOY PHASE (Main branch only)
+  # JOB 2: Validation Plan (Prevents "15-minute hang" by providing variables)
+  terraform-plan:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Azure Login
-        # UPDATE THIS LINE:
-        if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform Plan
+        run: |
+          terraform init -input=false
+          # We plan against staging to verify the code works
+          terraform plan \
+            -var="env=staging" \
+            -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}" \
+            -input=false
 
-      - name: Setup Terraform
-        if: github.ref == 'refs/heads/main'|| github.event_name == 'pull_request'
-        uses: hashicorp/setup-terraform@v3
-        
-      - name: Terraform Plan (Review Phase)
-        if: github.event_name == 'pull_request'
+  # JOB 3: Deploy to Staging (Automatic)
+  deploy-staging:
+    needs: terraform-plan
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform Apply
         run: |
-          terraform init
-          terraform plan -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}"
-      - name: Terraform Init & Apply
-        if: github.ref == 'refs/heads/main'
+          terraform init -input=false
+          terraform apply \
+            -var="env=staging" \
+            -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}" \
+            -auto-approve -input=false
+
+  # JOB 4: Deploy to Production (Waits for YOUR Approval in GitHub)
+  deploy-production:
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform Apply
         run: |
-          terraform init
-          terraform apply -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}" -auto-approve
+          terraform init -input=false
+          terraform apply \
+            -var="env=prod" \
+            -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}" \
+            -auto-approve -input=false

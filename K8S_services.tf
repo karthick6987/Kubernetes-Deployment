@@ -1,6 +1,7 @@
 resource "kubernetes_service" "webapp_service" {
-  metadata {
-    name = "webapp-service"
+  metadata { 
+    # Dynamic name: webapp-service-staging or webapp-service-prod
+    name = "webapp-service-${var.env}" 
   }
   spec {
     selector = { app = "webapp" }
