@@ -47,7 +47,13 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
       - name: Terraform Plan
         run: |
-          terraform init -input=false
+          terraform init \
+            -backend-config="resource_group_name=terraform-state-rg" \
+            -backend-config="storage_account_name=tfstateyourname" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=${{ matrix.env }}.tfstate" \
+            -input=false
+            
           # We plan against staging to verify the code works
           terraform plan \
             -var="env=staging" \
