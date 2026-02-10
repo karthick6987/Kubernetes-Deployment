@@ -1,4 +1,4 @@
-name: AKS-Multi-Env-Deployment
+name: AKS-Multi-Env-Deployment-V.20
 
 on:
   push:
@@ -47,7 +47,13 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
       - name: Terraform Plan
         run: |
-          terraform init -input=false
+          terraform init \
+            -backend-config="resource_group_name=terraform-state-rg" \
+            -backend-config="storage_account_name=tfstategithubaction2026" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=${{ matrix.env }}.tfstate" \
+            -input=false
+            
           # We plan against staging to verify the code works
           terraform plan \
             -var="env=staging" \
@@ -71,7 +77,12 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
       - name: Terraform Apply
         run: |
-          terraform init -input=false
+          terraform init \
+            -backend-config="resource_group_name=terraform-state-rg" \
+            -backend-config="storage_account_name=tfstategithubaction2026" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=${{ matrix.env }}.tfstate" \
+            -input=false
           terraform apply \
             -var="env=staging" \
             -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}" \
