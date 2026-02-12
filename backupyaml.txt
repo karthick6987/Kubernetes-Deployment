@@ -1,52 +1,20 @@
 name: AKS-Multi-Env-Deployment-V.20
-
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-
 permissions:
   id-token: write
   contents: read
-
 env:
   ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   ARM_USE_OIDC: true
-
 jobs:
-  # NEW JOB: Static Analysis & Security Scanning
-  static-analysis:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      # 1. TFLint: Checks for cloud best practices and typos
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v4
-        with:
-          tflint_version: v0.44.1
-
-      - name: Run TFLint
-        run: |
-          tflint --init
-          tflint -f compact
-
-      # 2. Checkov: Scans for security vulnerabilities (AKS, Network, etc.)
-      - name: Run Checkov
-        uses: bridgecrewio/checkov-action@master
-        with:
-          directory: .
-          framework: terraform
-          soft_fail: false # The workflow will STOP if security holes are found
-          quiet: true
-          output_format: cli
-
   # JOB 1: Build and Push Docker Image
   build:
-    needs: static-analysis # Only build if security checks pass
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +28,7 @@ jobs:
           docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }} .
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}
 
-  # JOB 2: Validation Plan 
+  # JOB 2: Validation Plan (Prevents "15-minute hang" by providing variables)
   terraform-plan:
     needs: build
     runs-on: ubuntu-latest
@@ -73,21 +41,20 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - uses: hashicorp/setup-terraform@v3
-      - name: Terraform Init & Plan
+      - name: Terraform Plan
         run: |
           terraform init \
             -backend-config="resource_group_name=terraform-state-rg" \
             -backend-config="storage_account_name=tfstategithubaction2026" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=staging.tfstate" \
-            -input=false
-            
+            -backend-config="key=${{ matrix.env }}.tfstate" \
+            -input=false         
+          # We plan against staging to verify the code works
           terraform plan \
             -var="env=staging" \
             -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}" \
             -input=false
-
-  # JOB 3: Deploy to Staging
+  # JOB 3: Deploy to Staging (Automatic)
   deploy-staging:
     needs: terraform-plan
     if: github.ref == 'refs/heads/main'
@@ -108,14 +75,13 @@ jobs:
             -backend-config="resource_group_name=terraform-state-rg" \
             -backend-config="storage_account_name=tfstategithubaction2026" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=staging.tfstate" \
+            -backend-config="key=${{ matrix.env }}.tfstate" \
             -input=false
           terraform apply \
-            -var="env=staging" \
+            -var="env=staging" 
             -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}" \
             -auto-approve -input=false
-
-  # JOB 4: Deploy to Production
+  # JOB 4: Deploy to Production (Waits for YOUR Approval in GitHub)
   deploy-production:
     needs: deploy-staging
     if: github.ref == 'refs/heads/main'
@@ -132,12 +98,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
       - name: Terraform Apply
         run: |
-          terraform init \
-            -backend-config="resource_group_name=terraform-state-rg" \
-            -backend-config="storage_account_name=tfstategithubaction2026" \
-            -backend-config="container_name=tfstate" \
-            -backend-config="key=prod.tfstate" \
-            -input=false
+          terraform init -input=false
           terraform apply \
             -var="env=prod" \
             -var="docker_image=${{ secrets.DOCKERHUB_USERNAME }}/webapp:${{ github.sha }}" \
