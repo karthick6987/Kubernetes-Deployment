@@ -5,6 +5,15 @@ on:
     branches: [ main, "feature/*" ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: 'Target environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - main
 
 # --- ADD THIS BLOCK ---
 permissions:
